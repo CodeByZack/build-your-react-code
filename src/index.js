@@ -2,6 +2,8 @@ let nextUnitOfWork = null;
 let currentRoot = null;
 let wipRoot = null;
 let deletions = null;
+let wipFiber = null;
+let hookIndex = null;
 
 const isEvent = key => key.startsWith("on");
 const isProperty = key => key !== "children" && !isEvent(key);
@@ -35,7 +37,7 @@ function createDom(fiber) {
     fiber.type === "TEXT_ELEMENT"
       ? document.createTextNode("")
       : document.createElement(fiber.type);
-  updateDom(dom, {}, fiber.props)
+  updateDom(dom, {}, fiber.props);
 
   return dom;
 }
@@ -62,7 +64,7 @@ function commitRoot() {
 function commitWork(fiber) {
   if (!fiber) return;
   let domParentFiber = fiber.parent;
-  while(!domParentFiber.dom){
+  while (!domParentFiber.dom) {
     domParentFiber = domParentFiber.parent;
   }
   const domParent = domParentFiber.dom;
@@ -72,17 +74,17 @@ function commitWork(fiber) {
   } else if (fiber.effectTag === "UPDATE" && fiber.dom != null) {
     updateDom(fiber.dom, fiber.alternate.props, fiber.props);
   } else if (fiber.effectTag === "DELETION") {
-    commitDeletion(fiber,domParent);
+    commitDeletion(fiber, domParent);
   }
   commitWork(fiber.child);
   commitWork(fiber.sibling);
 }
 
-function commitDeletion(fiber,domParent){
-  if(fiber.dom){
+function commitDeletion(fiber, domParent) {
+  if (fiber.dom) {
     domParent.removeChild(fiber.dom);
-  }else{
-    commitDeletion(fiber.child,domParent);
+  } else {
+    commitDeletion(fiber.child, domParent);
   }
 }
 
@@ -119,6 +121,38 @@ function updateDom(dom, prevProps, nextProps) {
     });
 }
 
+function useState(initial) {
+  const oldHook =
+    wipFiber.alternate &&
+    wipFiber.alternate.hooks &&
+    wipFiber.alternate.hooks[hookIndex];
+  const hook = {
+    state: oldHook ? oldHook.state : initial,
+    queue: []
+  };
+
+  const actions = oldHook ? oldHook.queue : [];
+  actions.forEach(action => {
+    hook.state = action(hook.state);
+  });
+
+  const setState = action => {
+    hook.queue.push(action);
+    wipRoot = {
+      dom: currentRoot.dom,
+      props: currentRoot.props,
+      alternate: currentRoot
+    };
+    nextUnitOfWork = wipRoot;
+    deletions = [];
+    requestIdleCallback(workLoop);
+  };
+
+  wipFiber.hooks.push(hook);
+  hookIndex++;
+  return [hook.state, setState];
+}
+
 function workLoop(deadLine) {
   let shouldYield = false;
   while (nextUnitOfWork && !shouldYield) {
@@ -135,14 +169,12 @@ function workLoop(deadLine) {
   }
 }
 
-requestIdleCallback(workLoop);
 
 function performUnitOfWork(fiber) {
-
   const isFunctionComponent = fiber.type instanceof Function;
-  if(isFunctionComponent){
+  if (isFunctionComponent) {
     updateFunctionComponent(fiber);
-  }else{
+  } else {
     updateHostComponent(fiber);
   }
   if (fiber.child) {
@@ -157,12 +189,15 @@ function performUnitOfWork(fiber) {
   }
 }
 
-function updateFunctionComponent(fiber){
+function updateFunctionComponent(fiber) {
+  wipFiber = fiber;
+  hookIndex = 0;
+  wipFiber.hooks = [];
   const children = [fiber.type(fiber.props)];
   reconcileChildren(fiber, children);
 }
 
-function updateHostComponent(fiber){
+function updateHostComponent(fiber) {
   if (!fiber.dom) {
     fiber.dom = createDom(fiber);
   }
@@ -217,20 +252,40 @@ function reconcileChildren(wipFiber, elements) {
     index++;
   }
 }
+
+
+
+requestIdleCallback(workLoop);
+
 const Didact = {
   createElement,
-  render
+  render,
+  useState
 };
 
 /** @jsx Didact.createElement */
-
-const listener = ()=>{
-  console.log("clicked!");
-}
+const Counter = () => {
+  const [count, setCount] = Didact.useState(0);
+  const listener = () => {
+    console.log("clicked!");
+    setCount(e => e + 1);
+  };
+  return (
+    <div>
+      <span>{count}</span>
+      <button onClick={listener}>add</button>
+    </div>
+  );
+};
 
 function App(props) {
-  return <h1>Hi {props.name}</h1>
+  return (
+    <div>
+      <h1>Hi {props.name}</h1>
+      <Counter />
+    </div>
+  );
 }
-const element = <App name="foo" />
-const container = document.getElementById("root")
-Didact.render(element, container)
+const element = <App name="foo" />;
+const container = document.getElementById("root");
+Didact.render(element, container);
